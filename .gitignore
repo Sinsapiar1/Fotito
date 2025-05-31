@@ -12,9 +12,13 @@ env/
 *.sqlite*
 instance/
 
-# Fotos capturadas localmente
+# Fotos capturadas localmente (efímeras en la nube)
 captured_photos/
 
 # Archivos de credenciales sensibles (¡CRÍTICO!)
-*.json  # Esto ignorará TODOS los archivos .json. Si tienes otros JSONs que SÍ debes subir, sé más específico, ej:
-# fotito-f50977c64a94.json  # Si prefieres solo ignorar este específico
+# Si tu JSON de cuenta de servicio se llama 'mi_credencial.json', ponlo aquí:
+# mi_credencial.json
+# O si todos tus JSONs de credenciales están en una subcarpeta:
+# credentials/*.json
+# O para ser muy general si no tienes otros JSONs que debas subir:
+# *.json

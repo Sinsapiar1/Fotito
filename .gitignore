@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Archivos de base de datos local
+*.db
+*.sqlite*
+instance/
+
+# Fotos capturadas localmente
+captured_photos/
+
+# Archivos de credenciales sensibles (¡CRÍTICO!)
+*.json  # Esto ignorará TODOS los archivos .json. Si tienes otros JSONs que SÍ debes subir, sé más específico, ej:
+# fotito-f50977c64a94.json  # Si prefieres solo ignorar este específico

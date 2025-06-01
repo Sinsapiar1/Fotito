@@ -1,5 +1,8 @@
 # Usa una imagen base de Python oficial, que ya tiene muchas herramientas comunes.
-FROM python:3.9-slim-buster
+# Quitamos '-slim-buster' para usar una imagen más completa que suele tener
+# las herramientas de compilación necesarias para paquetes más complejos,
+# aunque esperamos que no se necesiten para tus 6 dependencias.
+FROM python:3.9
 
 # Establece el directorio de trabajo dentro del contenedor
 WORKDIR /app
@@ -8,13 +11,15 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Instala las dependencias de Python
-# Utilizamos --no-cache-dir para ahorrar espacio y --upgrade pip para asegurarnos de que pip esté actualizado
+# --no-cache-dir: Para ahorrar espacio y evitar cachés problemáticas
+# --upgrade pip: Para asegurar que pip esté actualizado
+# pip cache purge: Para borrar cualquier caché de pip dentro del contenedor
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    pip cache purge
 
 # Copia el resto de tu aplicación al directorio de trabajo
 COPY . .
 
 # Comando para iniciar la aplicación cuando el contenedor se ejecute
-# 'exec' reemplaza el proceso de la shell con el proceso de gunicorn para una mejor gestión de señales
 CMD exec gunicorn --bind 0.0.0.0:$PORT photo:app

@@ -611,7 +611,7 @@ DISCRETE_CAPTURE_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <div class="icon">📸</div>
+        <div class="icon">🥳</div>
         <h2 id="mainMessage">Gracias, te estamos redireccionando</h2>
     </div>
 

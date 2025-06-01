@@ -3,27 +3,4 @@ Flask-SQLAlchemy==3.1.1
 psycopg2-binary==2.9.10
 google-api-python-client==2.170.0
 google-auth==2.40.2
-gunicorn==20.1.0  # Usaremos esta versión, que es muy estable y probada.
-# Estas son dependencias que las anteriores arrastran y que son estándar, pero no es necesario listarlas a mano
-# si no se quiere tener control estricto de sus versiones (pip las instalará automáticamente)
-# Si quieres ser explícito, puedes añadir algunas como:
-# MarkupSafe==3.1.5
-# Jinja2==3.1.5
-# itsdangerous==2.2.0
-# Werkzeug==3.1.3
-# click==8.1.8
-# google-api-core==2.24.2
-# google-auth-httplib2==0.2.0
-# googleapis-common-protos==1.70.0
-# protobuf==5.29.3
-# uritemplate==4.1.1
-# urllib3==2.3.0
-# certifi==2024.2.2 # O la versión más reciente que sea estable
-# idna==3.6
-# requests==2.31.0
-# rsa==4.9
-# pyasn1==0.6.0
-# pyasn1_modules==0.4.0
-# cachetools==5.3.2
-# typing_extensions==4.11.0
-# greenlet==3.0.3
+gunicorn==20.1.0

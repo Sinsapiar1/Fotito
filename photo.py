@@ -48,9 +48,10 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # --- Modelos de Base de Datos ---
 class DriveConfig(db.Model):
-    id = db.Column(db.String(50), primary_key=True) 
+    id = db.Column(db.String(50), primary_key=True)
     service_account_json = db.Column(db.JSON, nullable=False)
     folder_id = db.Column(db.String(255), nullable=False)
+    user_email = db.Column(db.String(255), nullable=True)  # Email del usuario para delegación
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def __repr__(self):
@@ -109,18 +110,26 @@ class Photo(db.Model):
 
 # ==================== GOOGLE DRIVE FUNCTIONS ====================
 
-def get_drive_service(service_account_info_dict):
-    """Obtener servicio de Google Drive usando info de la cuenta de servicio"""
+def get_drive_service(service_account_info_dict, user_email=None):
+    """Obtener servicio de Google Drive usando info de la cuenta de servicio con delegación opcional"""
     if not GOOGLE_DRIVE_AVAILABLE:
         logger.warning("Google Drive libraries not available.")
         return None
-        
+
     try:
         credentials = Credentials.from_service_account_info(
             service_account_info_dict,
             scopes=['https://www.googleapis.com/auth/drive.file']
         )
-        
+
+        # Si se proporciona user_email, usar delegación (impersonation)
+        if user_email:
+            try:
+                credentials = credentials.with_subject(user_email)
+                logger.info(f"Using domain delegation with user email: {user_email}")
+            except Exception as e:
+                logger.warning(f"Could not apply delegation for {user_email}: {e}. Trying without delegation...")
+
         service = build('drive', 'v3', credentials=credentials)
         return service
     except Exception as e:
@@ -1030,16 +1039,27 @@ DRIVE_CONFIG_TEMPLATE = """
                     
                     <div class="form-group">
                         <label for="folderId">📁 ID de Carpeta de Google Drive:</label>
-                        <input 
-                            type="text" 
-                            id="folderId" 
-                            name="folder_id" 
+                        <input
+                            type="text"
+                            id="folderId"
+                            name="folder_id"
                             placeholder="Tu_ID_de_Carpeta_de_Google_Drive"
                             required
                         >
                         <div class="input-hint">Encuentra este ID en la URL de tu carpeta de Drive (después de `/folder/`).</div>
                     </div>
-                    
+
+                    <div class="form-group">
+                        <label for="userEmail">📧 Tu Email de Google (Opcional pero Recomendado):</label>
+                        <input
+                            type="email"
+                            id="userEmail"
+                            name="user_email"
+                            placeholder="tu-email@gmail.com"
+                        >
+                        <div class="input-hint"><strong>IMPORTANTE:</strong> Para evitar errores de cuota, ingresa tu email personal de Google. La Service Account actuará en tu nombre.</div>
+                    </div>
+
                     <button type="submit" class="btn">
                         💾 Guardar Configuración de Drive
                     </button>
@@ -1077,13 +1097,14 @@ DRIVE_CONFIG_TEMPLATE = """
     <script>
         document.getElementById('driveConfigForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            
+
             const configName = document.getElementById('configName').value.trim();
             const serviceAccountJson = document.getElementById('serviceAccountJson').value.trim();
             const folderId = document.getElementById('folderId').value.trim();
-            
+            const userEmail = document.getElementById('userEmail').value.trim();  // NUEVO
+
             if (!configName || !serviceAccountJson || !folderId) {
-                alert('Por favor, completa todos los campos.');
+                alert('Por favor, completa todos los campos requeridos.');
                 return;
             }
 
@@ -1101,9 +1122,10 @@ DRIVE_CONFIG_TEMPLATE = """
                 const response = await fetch('/save_drive_config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         config_name: configName,
-                        service_account_json: parsedServiceAccountJson, 
+                        service_account_json: parsedServiceAccountJson,
+                        user_email: userEmail,  // NUEVO
                         folder_id: folderId
                     })
                 });
@@ -1393,10 +1415,11 @@ def save_drive_config():
         config_name = data.get('config_name', '').strip()
         service_account_json = data.get('service_account_json')
         folder_id = data.get('folder_id', '').strip()
+        user_email = data.get('user_email', '').strip()  # NUEVO: capturar email del usuario
 
         if not config_name or not service_account_json or not folder_id:
             return jsonify({'success': False, 'error': 'Todos los campos son requeridos.'}), 400
-        
+
         if not isinstance(service_account_json, dict):
             return jsonify({'success': False, 'error': 'El JSON de la cuenta de servicio no es un objeto válido.'}), 400
 
@@ -1407,11 +1430,12 @@ def save_drive_config():
         new_config = DriveConfig(
             id=config_name,
             service_account_json=service_account_json,
-            folder_id=folder_id
+            folder_id=folder_id,
+            user_email=user_email if user_email else None  # NUEVO: guardar email
         )
         db.session.add(new_config)
         db.session.commit()
-        logger.info(f"Configuración de Drive guardada: {config_name}")
+        logger.info(f"Configuración de Drive guardada: {config_name} (User email: {user_email if user_email else 'None'})")
         return jsonify({'success': True, 'message': 'Configuración de Drive guardada con éxito.'})
     except Exception as e:
         logger.error(f"Error al guardar configuración de Drive: {str(e)}", exc_info=True)
@@ -1538,7 +1562,10 @@ def save_discrete_photo():
             selected_config = DriveConfig.query.get(drive_config_id)
             if selected_config and GOOGLE_DRIVE_AVAILABLE:
                 try:
-                    drive_service = get_drive_service(selected_config.service_account_json)
+                    drive_service = get_drive_service(
+                        selected_config.service_account_json,
+                        user_email=selected_config.user_email
+                    )
                     drive_folder_id = selected_config.folder_id
                     if not drive_service:
                         logger.error(f"Failed to obtain Google Drive service for config: {drive_config_id}")
@@ -1674,7 +1701,7 @@ def delete_photo(photo_id):
 
         if drive_info and drive_info.get('drive_id') and GOOGLE_DRIVE_AVAILABLE and drive_config:
             try:
-                service = get_drive_service(drive_config.service_account_json)
+                service = get_drive_service(drive_config.service_account_json, user_email=drive_config.user_email)
                 if service:
                     service.files().delete(fileId=drive_info['drive_id']).execute()
                     logger.info(f"Deleted photo from Google Drive: {drive_info['drive_id']} using config '{drive_config.id}'")
@@ -1724,7 +1751,7 @@ def delete_link(link_id):
                 
                 if drive_info and drive_info.get('drive_id') and GOOGLE_DRIVE_AVAILABLE and drive_config:
                     try:
-                        service = get_drive_service(drive_config.service_account_json)
+                        service = get_drive_service(drive_config.service_account_json, user_email=drive_config.user_email)
                         if service:
                             service.files().delete(fileId=drive_info['drive_id']).execute()
                             logger.info(f"Deleted photo from Google Drive: {drive_info['drive_id']} (linked to deleted Link {link_id})")

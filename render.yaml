@@ -1,0 +1,20 @@
+# render.yaml
+services:
+  - type: web
+    name: fotito
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn photo:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fotito-db
+          property: connectionString
+
+databases:
+  - name: fotito-db
+    plan: free

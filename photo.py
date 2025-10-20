@@ -2083,6 +2083,17 @@ def migrate_db():
                 db.session.rollback()
                 results.append(f"⚠ service_account_json: {str(e)[:100]}")
 
+            # Hacer folder_id nullable (importante para Cloudinary)
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config ALTER COLUMN folder_id DROP NOT NULL"
+                ))
+                db.session.commit()
+                results.append("✓ folder_id ahora es nullable")
+            except Exception as e:
+                db.session.rollback()
+                results.append(f"⚠ folder_id: {str(e)[:100]}")
+
             # Agregar columna provider si no existe (default 'drive')
             try:
                 db.session.execute(db.text(

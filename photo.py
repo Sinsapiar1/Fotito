@@ -2177,6 +2177,36 @@ def fix_column_typos():
                 else:
                     results.append(f"⚠ doudinary_api_secret: {error_msg[:100]}")
 
+            # Renombrar doudinary_folder a cloudinary_folder
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config RENAME COLUMN doudinary_folder TO cloudinary_folder"
+                ))
+                db.session.commit()
+                results.append("✓ Columna doudinary_folder renombrada a cloudinary_folder")
+            except Exception as e:
+                db.session.rollback()
+                error_msg = str(e)
+                if "does not exist" in error_msg or "no existe" in error_msg:
+                    results.append("⚠ doudinary_folder ya no existe (posiblemente ya corregido)")
+                else:
+                    results.append(f"⚠ doudinary_folder: {error_msg[:100]}")
+
+            # Asegurar que folder_id sea nullable (necesario para Cloudinary)
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config ALTER COLUMN folder_id DROP NOT NULL"
+                ))
+                db.session.commit()
+                results.append("✓ Columna folder_id ahora es nullable")
+            except Exception as e:
+                db.session.rollback()
+                error_msg = str(e)
+                if "does not exist" in error_msg or "no existe" in error_msg:
+                    results.append("⚠ folder_id: columna no existe")
+                else:
+                    results.append(f"⚠ folder_id: {error_msg[:100]}")
+
         logger.info("Corrección de typos completada: " + ", ".join(results))
         return "<br>".join(results) + "<br><br><b>Corrección de typos completada. Ahora las columnas tienen los nombres correctos.</b>", 200
     except Exception as e:

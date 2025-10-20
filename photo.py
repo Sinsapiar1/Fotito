@@ -2141,6 +2141,48 @@ def migrate_db():
         logger.error(f"Error en migración de base de datos: {e}", exc_info=True)
         return f"Error en migración: {e}", 500
 
+@app.route('/fix_column_typos')
+def fix_column_typos():
+    """Ruta para corregir los typos en los nombres de columnas de drive_config."""
+    results = []
+    try:
+        with app.app_context():
+            # Renombrar doudinary_cloud_name a cloudinary_cloud_name
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config RENAME COLUMN doudinary_cloud_name TO cloudinary_cloud_name"
+                ))
+                db.session.commit()
+                results.append("✓ Columna doudinary_cloud_name renombrada a cloudinary_cloud_name")
+            except Exception as e:
+                db.session.rollback()
+                error_msg = str(e)
+                if "does not exist" in error_msg or "no existe" in error_msg:
+                    results.append("⚠ doudinary_cloud_name ya no existe (posiblemente ya corregido)")
+                else:
+                    results.append(f"⚠ doudinary_cloud_name: {error_msg[:100]}")
+
+            # Renombrar doudinary_api_secret a cloudinary_api_secret
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config RENAME COLUMN doudinary_api_secret TO cloudinary_api_secret"
+                ))
+                db.session.commit()
+                results.append("✓ Columna doudinary_api_secret renombrada a cloudinary_api_secret")
+            except Exception as e:
+                db.session.rollback()
+                error_msg = str(e)
+                if "does not exist" in error_msg or "no existe" in error_msg:
+                    results.append("⚠ doudinary_api_secret ya no existe (posiblemente ya corregido)")
+                else:
+                    results.append(f"⚠ doudinary_api_secret: {error_msg[:100]}")
+
+        logger.info("Corrección de typos completada: " + ", ".join(results))
+        return "<br>".join(results) + "<br><br><b>Corrección de typos completada. Ahora las columnas tienen los nombres correctos.</b>", 200
+    except Exception as e:
+        logger.error(f"Error al corregir typos en base de datos: {e}", exc_info=True)
+        return f"Error al corregir typos: {e}", 500
+
 
 if __name__ == '__main__':
     with app.app_context():

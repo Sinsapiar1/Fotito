@@ -2069,40 +2069,63 @@ def init_db():
 @app.route('/migrate_db')
 def migrate_db():
     """Ruta para migrar la base de datos (agregar columnas para soporte multi-proveedor)."""
+    results = []
     try:
         with app.app_context():
             # Hacer service_account_json nullable (importante para Cloudinary)
-            db.session.execute(db.text(
-                "ALTER TABLE drive_config ALTER COLUMN service_account_json DROP NOT NULL"
-            ))
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config ALTER COLUMN service_account_json DROP NOT NULL"
+                ))
+                db.session.commit()
+                results.append("✓ service_account_json ahora es nullable")
+            except Exception as e:
+                db.session.rollback()
+                results.append(f"⚠ service_account_json: {str(e)[:100]}")
 
             # Agregar columna provider si no existe (default 'drive')
-            db.session.execute(db.text(
-                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS provider VARCHAR(20) DEFAULT 'drive'"
-            ))
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS provider VARCHAR(20) DEFAULT 'drive'"
+                ))
+                db.session.commit()
+                results.append("✓ Columna provider agregada")
+            except Exception as e:
+                db.session.rollback()
+                results.append(f"⚠ provider: {str(e)[:50]}")
 
             # Agregar columna user_email para Google Drive si no existe
-            db.session.execute(db.text(
-                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS user_email VARCHAR(255)"
-            ))
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS user_email VARCHAR(255)"
+                ))
+                db.session.commit()
+                results.append("✓ Columna user_email agregada")
+            except Exception as e:
+                db.session.rollback()
+                results.append(f"⚠ user_email: {str(e)[:50]}")
 
             # Agregar columnas de Cloudinary si no existen
-            db.session.execute(db.text(
-                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_cloud_name VARCHAR(100)"
-            ))
-            db.session.execute(db.text(
-                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_api_key VARCHAR(100)"
-            ))
-            db.session.execute(db.text(
-                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_api_secret VARCHAR(100)"
-            ))
-            db.session.execute(db.text(
-                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_folder VARCHAR(255)"
-            ))
+            cloudinary_columns = [
+                ("cloudinary_cloud_name", "VARCHAR(100)"),
+                ("cloudinary_api_key", "VARCHAR(100)"),
+                ("cloudinary_api_secret", "VARCHAR(100)"),
+                ("cloudinary_folder", "VARCHAR(255)")
+            ]
 
-            db.session.commit()
-        logger.info("Migración completada: columnas para multi-proveedor agregadas a drive_config.")
-        return "Migración completada exitosamente. Columnas para Google Drive y Cloudinary agregadas.", 200
+            for col_name, col_type in cloudinary_columns:
+                try:
+                    db.session.execute(db.text(
+                        f"ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+                    ))
+                    db.session.commit()
+                    results.append(f"✓ Columna {col_name} agregada")
+                except Exception as e:
+                    db.session.rollback()
+                    results.append(f"⚠ {col_name}: {str(e)[:50]}")
+
+        logger.info("Migración completada: " + ", ".join(results))
+        return "<br>".join(results) + "<br><br><b>Migración completada. Ahora puedes guardar configuraciones de Cloudinary.</b>", 200
     except Exception as e:
         logger.error(f"Error en migración de base de datos: {e}", exc_info=True)
         return f"Error en migración: {e}", 500

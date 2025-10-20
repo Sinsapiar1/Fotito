@@ -4,10 +4,10 @@ services:
     name: fotito
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn photo:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT photo:app
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9
+        value: 3.9.0
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
@@ -17,4 +17,5 @@ services:
 
 databases:
   - name: fotito-db
+    databaseName: fotito
     plan: free

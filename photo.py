@@ -25,6 +25,16 @@ except ImportError:
     GOOGLE_DRIVE_AVAILABLE = False
     print("⚠️ Google Drive libraries not installed. Install with: pip install google-api-python-client google-auth")
 
+# Imports para Cloudinary
+try:
+    import cloudinary
+    import cloudinary.uploader
+    import cloudinary.api
+    CLOUDINARY_AVAILABLE = True
+except ImportError:
+    CLOUDINARY_AVAILABLE = False
+    print("⚠️ Cloudinary library not installed. Install with: pip install cloudinary")
+
 # Configuración de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -49,13 +59,18 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # --- Modelos de Base de Datos ---
 class DriveConfig(db.Model):
     id = db.Column(db.String(50), primary_key=True)
-    service_account_json = db.Column(db.JSON, nullable=False)
-    folder_id = db.Column(db.String(255), nullable=False)
-    user_email = db.Column(db.String(255), nullable=True)  # Email del usuario para delegación
+    provider = db.Column(db.String(20), nullable=False, default='drive')  # 'drive' o 'cloudinary'
+    service_account_json = db.Column(db.JSON, nullable=True)  # Para Google Drive
+    folder_id = db.Column(db.String(255), nullable=True)  # Para Google Drive
+    user_email = db.Column(db.String(255), nullable=True)  # Para Google Drive delegation
+    cloudinary_cloud_name = db.Column(db.String(100), nullable=True)  # Para Cloudinary
+    cloudinary_api_key = db.Column(db.String(100), nullable=True)  # Para Cloudinary
+    cloudinary_api_secret = db.Column(db.String(100), nullable=True)  # Para Cloudinary
+    cloudinary_folder = db.Column(db.String(255), nullable=True)  # Carpeta en Cloudinary
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def __repr__(self):
-        return f"<DriveConfig {self.id}>"
+        return f"<DriveConfig {self.id} ({self.provider})>"
 
 class Link(db.Model):
     id = db.Column(db.String(8), primary_key=True)
@@ -173,6 +188,44 @@ def upload_to_drive(file_data, filename, folder_id, service):
         
     except Exception as e:
         logger.error(f"Error uploading '{filename}' to Google Drive: {e}", exc_info=True)
+        raise e
+
+def upload_to_cloudinary(file_data, filename, folder, cloud_name, api_key, api_secret):
+    """Subir archivo a Cloudinary"""
+    if not CLOUDINARY_AVAILABLE:
+        logger.error("Cloudinary library not available.")
+        raise ValueError("Cloudinary library is not installed.")
+
+    try:
+        # Configurar Cloudinary
+        cloudinary.config(
+            cloud_name=cloud_name,
+            api_key=api_key,
+            api_secret=api_secret,
+            secure=True
+        )
+
+        # Subir archivo
+        upload_result = cloudinary.uploader.upload(
+            file_data,
+            folder=folder if folder else "fotito",
+            public_id=filename.rsplit('.', 1)[0],  # Nombre sin extensión
+            resource_type="image",
+            overwrite=False,
+            unique_filename=True
+        )
+
+        logger.info(f"Foto '{filename}' subida a Cloudinary: {upload_result['secure_url']}")
+
+        return {
+            'cloudinary_id': upload_result['public_id'],
+            'name': filename,
+            'view_link': upload_result['secure_url'],
+            'thumbnail': upload_result.get('thumbnail_url', upload_result['secure_url'])
+        }
+
+    except Exception as e:
+        logger.error(f"Error uploading '{filename}' to Cloudinary: {e}", exc_info=True)
         raise e
 
 # ==================== HTML TEMPLATES ====================
@@ -839,7 +892,7 @@ DRIVE_CONFIG_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>⚙️ Configurar Google Drive</title>
+    <title>⚙️ Configurar Almacenamiento en la Nube</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -873,7 +926,37 @@ DRIVE_CONFIG_TEMPLATE = """
             line-height: 1.5;
         }
         .content { padding: 50px 40px; }
-        
+
+        .provider-selector {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .provider-btn {
+            padding: 15px 30px;
+            border: 2px solid #a8c0ff;
+            background: white;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .provider-btn:hover {
+            background: #f0f4ff;
+        }
+        .provider-btn.active {
+            background: linear-gradient(135deg, #a8c0ff 0%, #392b58 100%);
+            color: white;
+        }
+        .provider-fields {
+            display: none;
+        }
+        .provider-fields.active {
+            display: block;
+        }
+
         .form-section {
             background: #f8f9fa;
             padding: 40px;
@@ -1005,63 +1088,122 @@ DRIVE_CONFIG_TEMPLATE = """
 <body>
     <div class="container">
         <div class="header">
-            <h1>⚙️ Configuración de Google Drive</h1>
-            <p>Añade y gestiona las credenciales de tus cuentas de Google Drive para subir fotos.</p>
+            <h1>⚙️ Configuración de Almacenamiento en la Nube</h1>
+            <p>Añade y gestiona las credenciales de Google Drive o Cloudinary para subir fotos.</p>
         </div>
         
         <div class="content">
             <div class="form-section">
-                <h2>➕ Añadir Nueva Configuración de Drive</h2>
-                
+                <h2>➕ Añadir Nueva Configuración</h2>
+
+                <div class="provider-selector">
+                    <button type="button" class="provider-btn active" onclick="selectProvider('drive')">
+                        🗂️ Google Drive
+                    </button>
+                    <button type="button" class="provider-btn" onclick="selectProvider('cloudinary')">
+                        ☁️ Cloudinary
+                    </button>
+                </div>
+
                 <form id="driveConfigForm">
                     <div class="form-group">
                         <label for="configName">🏷️ Nombre de la Configuración:</label>
-                        <input 
-                            type="text" 
-                            id="configName" 
-                            name="config_name" 
-                            placeholder="Mi Drive Personal"
-                            required
-                        >
-                        <div class="input-hint">Un nombre único para identificar esta configuración (ej. "Drive de Juan", "Estudio Lab").</div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="serviceAccountJson">🔑 JSON de Cuenta de Servicio:</label>
-                        <textarea 
-                            id="serviceAccountJson" 
-                            name="service_account_json" 
-                            placeholder='Pega aquí el contenido completo de tu archivo JSON de credenciales de Google Service Account (incluyendo las llaves {})...'
-                            required
-                        ></textarea>
-                        <div class="input-hint">Asegúrate de que la cuenta de servicio tenga permisos de "Editor" en la carpeta de destino.</div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="folderId">📁 ID de Carpeta de Google Drive:</label>
                         <input
                             type="text"
-                            id="folderId"
-                            name="folder_id"
-                            placeholder="Tu_ID_de_Carpeta_de_Google_Drive"
+                            id="configName"
+                            name="config_name"
+                            placeholder="Mi Configuración"
                             required
                         >
-                        <div class="input-hint">Encuentra este ID en la URL de tu carpeta de Drive (después de `/folder/`).</div>
+                        <div class="input-hint">Un nombre único para identificar esta configuración.</div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="userEmail">📧 Tu Email de Google (Opcional pero Recomendado):</label>
-                        <input
-                            type="email"
-                            id="userEmail"
-                            name="user_email"
-                            placeholder="tu-email@gmail.com"
-                        >
-                        <div class="input-hint"><strong>IMPORTANTE:</strong> Para evitar errores de cuota, ingresa tu email personal de Google. La Service Account actuará en tu nombre.</div>
+                    <input type="hidden" id="provider" name="provider" value="drive">
+
+                    <!-- Campos de Google Drive -->
+                    <div id="driveFields" class="provider-fields active">
+                        <div class="form-group">
+                            <label for="serviceAccountJson">🔑 JSON de Cuenta de Servicio:</label>
+                            <textarea
+                                id="serviceAccountJson"
+                                name="service_account_json"
+                                placeholder='Pega aquí el contenido completo de tu archivo JSON de credenciales de Google Service Account (incluyendo las llaves {})...'
+                            ></textarea>
+                            <div class="input-hint">Asegúrate de que la cuenta de servicio tenga permisos de "Editor" en la carpeta de destino.</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="folderId">📁 ID de Carpeta de Google Drive:</label>
+                            <input
+                                type="text"
+                                id="folderId"
+                                name="folder_id"
+                                placeholder="Tu_ID_de_Carpeta_de_Google_Drive"
+                            >
+                            <div class="input-hint">Encuentra este ID en la URL de tu carpeta de Drive (después de `/folder/`).</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="userEmail">📧 Tu Email de Google (Opcional pero Recomendado):</label>
+                            <input
+                                type="email"
+                                id="userEmail"
+                                name="user_email"
+                                placeholder="tu-email@gmail.com"
+                            >
+                            <div class="input-hint"><strong>IMPORTANTE:</strong> Para evitar errores de cuota, ingresa tu email personal de Google. La Service Account actuará en tu nombre.</div>
+                        </div>
+                    </div>
+
+                    <!-- Campos de Cloudinary -->
+                    <div id="cloudinaryFields" class="provider-fields">
+                        <div class="form-group">
+                            <label for="cloudinaryCloudName">☁️ Cloud Name:</label>
+                            <input
+                                type="text"
+                                id="cloudinaryCloudName"
+                                name="cloudinary_cloud_name"
+                                placeholder="tu-cloud-name"
+                            >
+                            <div class="input-hint">Encuentra esto en tu dashboard de Cloudinary.</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cloudinaryApiKey">🔑 API Key:</label>
+                            <input
+                                type="text"
+                                id="cloudinaryApiKey"
+                                name="cloudinary_api_key"
+                                placeholder="123456789012345"
+                            >
+                            <div class="input-hint">Tu API Key de Cloudinary.</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cloudinaryApiSecret">🔐 API Secret:</label>
+                            <input
+                                type="password"
+                                id="cloudinaryApiSecret"
+                                name="cloudinary_api_secret"
+                                placeholder="Tu API Secret"
+                            >
+                            <div class="input-hint">Mantén esto seguro y privado.</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cloudinaryFolder">📁 Carpeta (Opcional):</label>
+                            <input
+                                type="text"
+                                id="cloudinaryFolder"
+                                name="cloudinary_folder"
+                                placeholder="fotito"
+                            >
+                            <div class="input-hint">Carpeta donde se guardarán las fotos. Por defecto: "fotito".</div>
+                        </div>
                     </div>
 
                     <button type="submit" class="btn">
-                        💾 Guardar Configuración de Drive
+                        💾 Guardar Configuración
                     </button>
                 </form>
             </div>
@@ -1073,18 +1215,25 @@ DRIVE_CONFIG_TEMPLATE = """
                         <div class="config-item">
                             <div>
                                 <p><strong>Nombre:</strong> {{ config.id }}</p>
-                                <p><strong>ID de Carpeta:</strong> {{ config.folder_id }}</p>
-                                {% if config.service_account_json and config.service_account_json.client_email %}
-                                    <p><small>Email de Servicio: {{ config.service_account_json.client_email }}</small></p>
-                                {% else %}
-                                    <p><small>Email de Servicio: N/A o JSON Inválido</small></p>
+                                <p><strong>Proveedor:</strong> {{ 'Google Drive' if config.provider == 'drive' else 'Cloudinary' }}</p>
+                                {% if config.provider == 'drive' %}
+                                    <p><strong>ID de Carpeta:</strong> {{ config.folder_id }}</p>
+                                    {% if config.service_account_json and config.service_account_json.client_email %}
+                                        <p><small>Email de Servicio: {{ config.service_account_json.client_email }}</small></p>
+                                    {% endif %}
+                                    {% if config.user_email %}
+                                        <p><small>Email de Usuario: {{ config.user_email }}</small></p>
+                                    {% endif %}
+                                {% elif config.provider == 'cloudinary' %}
+                                    <p><strong>Cloud Name:</strong> {{ config.cloudinary_cloud_name }}</p>
+                                    <p><strong>Carpeta:</strong> {{ config.cloudinary_folder or 'fotito' }}</p>
                                 {% endif %}
                             </div>
                             <button onclick="deleteConfig('{{ config.id }}')">Eliminar</button>
                         </div>
                     {% endfor %}
                 {% else %}
-                    <p class="no-configs">No hay configuraciones de Drive guardadas.</p>
+                    <p class="no-configs">No hay configuraciones guardadas.</p>
                 {% endif %}
             </div>
             
@@ -1095,21 +1244,54 @@ DRIVE_CONFIG_TEMPLATE = """
     </div>
 
     <script>
+        function selectProvider(provider) {
+            // Actualizar botones
+            document.querySelectorAll('.provider-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Actualizar campos visibles
+            document.getElementById('driveFields').classList.remove('active');
+            document.getElementById('cloudinaryFields').classList.remove('active');
+
+            if (provider === 'drive') {
+                document.getElementById('driveFields').classList.add('active');
+            } else if (provider === 'cloudinary') {
+                document.getElementById('cloudinaryFields').classList.add('active');
+            }
+
+            // Actualizar input hidden
+            document.getElementById('provider').value = provider;
+        }
+
         document.getElementById('driveConfigForm').addEventListener('submit', async function(e) {
             e.preventDefault();
 
             const configName = document.getElementById('configName').value.trim();
-            const serviceAccountJson = document.getElementById('serviceAccountJson').value.trim();
-            const folderId = document.getElementById('folderId').value.trim();
-            const userEmail = document.getElementById('userEmail').value.trim();  // NUEVO
+            const provider = document.getElementById('provider').value;
 
-            if (!configName || !serviceAccountJson || !folderId) {
-                alert('Por favor, completa todos los campos requeridos.');
+            if (!configName) {
+                alert('Por favor, ingresa un nombre para la configuración.');
                 return;
             }
 
-            try {
-                // Intenta parsear el JSON antes de enviarlo
+            let requestBody = {
+                config_name: configName,
+                provider: provider
+            };
+
+            if (provider === 'drive') {
+                const serviceAccountJson = document.getElementById('serviceAccountJson').value.trim();
+                const folderId = document.getElementById('folderId').value.trim();
+                const userEmail = document.getElementById('userEmail').value.trim();
+
+                if (!serviceAccountJson || !folderId) {
+                    alert('Por favor, completa todos los campos requeridos para Google Drive.');
+                    return;
+                }
+
+                // Parsear JSON
                 let parsedServiceAccountJson;
                 try {
                     parsedServiceAccountJson = JSON.parse(serviceAccountJson);
@@ -1119,26 +1301,43 @@ DRIVE_CONFIG_TEMPLATE = """
                     return;
                 }
 
+                requestBody.service_account_json = parsedServiceAccountJson;
+                requestBody.folder_id = folderId;
+                requestBody.user_email = userEmail;
+
+            } else if (provider === 'cloudinary') {
+                const cloudName = document.getElementById('cloudinaryCloudName').value.trim();
+                const apiKey = document.getElementById('cloudinaryApiKey').value.trim();
+                const apiSecret = document.getElementById('cloudinaryApiSecret').value.trim();
+                const folder = document.getElementById('cloudinaryFolder').value.trim();
+
+                if (!cloudName || !apiKey || !apiSecret) {
+                    alert('Por favor, completa todos los campos requeridos para Cloudinary.');
+                    return;
+                }
+
+                requestBody.cloudinary_cloud_name = cloudName;
+                requestBody.cloudinary_api_key = apiKey;
+                requestBody.cloudinary_api_secret = apiSecret;
+                requestBody.cloudinary_folder = folder;
+            }
+
+            try {
                 const response = await fetch('/save_drive_config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        config_name: configName,
-                        service_account_json: parsedServiceAccountJson,
-                        user_email: userEmail,  // NUEVO
-                        folder_id: folderId
-                    })
+                    body: JSON.stringify(requestBody)
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
-                    alert('Configuración de Drive guardada con éxito.');
-                    location.reload(); 
+                    alert('Configuración guardada con éxito.');
+                    location.reload();
                 } else {
                     alert('Error: ' + data.error);
                 }
-                
+
             } catch (error) {
                 console.error('Error:', error);
                 alert('Error al guardar la configuración. Verifica la conexión.');
@@ -1409,36 +1608,66 @@ def config_drive():
 
 @app.route('/save_drive_config', methods=['POST'])
 def save_drive_config():
-    """Guardar una nueva configuración de Google Drive."""
+    """Guardar una nueva configuración de Google Drive o Cloudinary."""
     try:
         data = request.get_json()
         config_name = data.get('config_name', '').strip()
-        service_account_json = data.get('service_account_json')
-        folder_id = data.get('folder_id', '').strip()
-        user_email = data.get('user_email', '').strip()  # NUEVO: capturar email del usuario
+        provider = data.get('provider', 'drive').strip()  # 'drive' o 'cloudinary'
 
-        if not config_name or not service_account_json or not folder_id:
-            return jsonify({'success': False, 'error': 'Todos los campos son requeridos.'}), 400
-
-        if not isinstance(service_account_json, dict):
-            return jsonify({'success': False, 'error': 'El JSON de la cuenta de servicio no es un objeto válido.'}), 400
+        if not config_name:
+            return jsonify({'success': False, 'error': 'El nombre de la configuración es requerido.'}), 400
 
         existing_config = DriveConfig.query.get(config_name)
         if existing_config:
             return jsonify({'success': False, 'error': f'Ya existe una configuración con el nombre "{config_name}". Por favor, usa otro nombre.'}), 400
 
-        new_config = DriveConfig(
-            id=config_name,
-            service_account_json=service_account_json,
-            folder_id=folder_id,
-            user_email=user_email if user_email else None  # NUEVO: guardar email
-        )
+        if provider == 'drive':
+            service_account_json = data.get('service_account_json')
+            folder_id = data.get('folder_id', '').strip()
+            user_email = data.get('user_email', '').strip()
+
+            if not service_account_json or not folder_id:
+                return jsonify({'success': False, 'error': 'Para Google Drive, se requiere JSON de cuenta de servicio y folder ID.'}), 400
+
+            if not isinstance(service_account_json, dict):
+                return jsonify({'success': False, 'error': 'El JSON de la cuenta de servicio no es un objeto válido.'}), 400
+
+            new_config = DriveConfig(
+                id=config_name,
+                provider='drive',
+                service_account_json=service_account_json,
+                folder_id=folder_id,
+                user_email=user_email if user_email else None
+            )
+            logger.info(f"Configuración de Google Drive guardada: {config_name} (User email: {user_email if user_email else 'None'})")
+
+        elif provider == 'cloudinary':
+            cloud_name = data.get('cloudinary_cloud_name', '').strip()
+            api_key = data.get('cloudinary_api_key', '').strip()
+            api_secret = data.get('cloudinary_api_secret', '').strip()
+            folder = data.get('cloudinary_folder', '').strip()
+
+            if not cloud_name or not api_key or not api_secret:
+                return jsonify({'success': False, 'error': 'Para Cloudinary, se requiere cloud name, API key y API secret.'}), 400
+
+            new_config = DriveConfig(
+                id=config_name,
+                provider='cloudinary',
+                cloudinary_cloud_name=cloud_name,
+                cloudinary_api_key=api_key,
+                cloudinary_api_secret=api_secret,
+                cloudinary_folder=folder if folder else 'fotito'
+            )
+            logger.info(f"Configuración de Cloudinary guardada: {config_name} (Cloud: {cloud_name}, Folder: {folder})")
+
+        else:
+            return jsonify({'success': False, 'error': f'Proveedor no válido: {provider}'}), 400
+
         db.session.add(new_config)
         db.session.commit()
-        logger.info(f"Configuración de Drive guardada: {config_name} (User email: {user_email if user_email else 'None'})")
-        return jsonify({'success': True, 'message': 'Configuración de Drive guardada con éxito.'})
+        return jsonify({'success': True, 'message': f'Configuración de {provider} guardada con éxito.'})
     except Exception as e:
-        logger.error(f"Error al guardar configuración de Drive: {str(e)}", exc_info=True)
+        logger.error(f"Error al guardar configuración: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'Error interno del servidor: {str(e)}'}), 500
 
 @app.route('/delete_drive_config/<config_name>', methods=['POST'])
@@ -1599,18 +1828,42 @@ def save_discrete_photo():
         file_obj.save(local_filepath)
         logger.info(f"Foto guardada localmente: {local_filepath}")
 
-        # Subir a Google Drive si el servicio y la ID de la carpeta están listos
-        if drive_service and drive_folder_id:
-            try:
-                with open(local_filepath, 'rb') as f:
-                    file_data_for_drive = f.read()
-                current_drive_info = upload_to_drive(file_data_for_drive, filename, drive_folder_id, drive_service)
-                logger.info(f"Foto '{filename}' subida a Google Drive. ID: {current_drive_info.get('drive_id')}")
-            except Exception as e:
-                logger.error(f"Error uploading photo '{filename}' to Google Drive: {e}")
-                current_drive_info = {'error': str(e), 'status': 'failed'}
-        else:
-            logger.warning(f"Google Drive upload skipped for '{filename}' due to missing service or folder ID.")
+        # Subir a Google Drive o Cloudinary según el proveedor configurado
+        if drive_config_id:
+            selected_config = DriveConfig.query.get(drive_config_id)
+            if selected_config:
+                provider = selected_config.provider
+
+                if provider == 'drive' and drive_service and drive_folder_id:
+                    try:
+                        with open(local_filepath, 'rb') as f:
+                            file_data_for_drive = f.read()
+                        current_drive_info = upload_to_drive(file_data_for_drive, filename, drive_folder_id, drive_service)
+                        logger.info(f"Foto '{filename}' subida a Google Drive. ID: {current_drive_info.get('drive_id')}")
+                    except Exception as e:
+                        logger.error(f"Error uploading photo '{filename}' to Google Drive: {e}")
+                        current_drive_info = {'error': str(e), 'status': 'failed'}
+
+                elif provider == 'cloudinary' and CLOUDINARY_AVAILABLE:
+                    try:
+                        with open(local_filepath, 'rb') as f:
+                            file_data_for_cloudinary = f.read()
+                        current_drive_info = upload_to_cloudinary(
+                            file_data_for_cloudinary,
+                            filename,
+                            selected_config.cloudinary_folder,
+                            selected_config.cloudinary_cloud_name,
+                            selected_config.cloudinary_api_key,
+                            selected_config.cloudinary_api_secret
+                        )
+                        logger.info(f"Foto '{filename}' subida a Cloudinary. ID: {current_drive_info.get('cloudinary_id')}")
+                    except Exception as e:
+                        logger.error(f"Error uploading photo '{filename}' to Cloudinary: {e}")
+                        current_drive_info = {'error': str(e), 'status': 'failed'}
+                else:
+                    logger.warning(f"Upload skipped for '{filename}'. Provider: {provider}, Available: Drive={drive_service is not None}, Cloudinary={CLOUDINARY_AVAILABLE}")
+            else:
+                logger.warning(f"Config '{drive_config_id}' not found for upload.")
         
         # En entorno de desarrollo local, no borramos el archivo local
         # En Render (producción), el almacenamiento es efímero, así que se borrará de todos modos.
@@ -1695,22 +1948,36 @@ def delete_photo(photo_id):
             logger.warning(f"Attempted to delete non-existent photo ID: {photo_id}")
             return jsonify({'success': False, 'error': 'Photo not found'}), 404
 
-        # Eliminar de Google Drive (si existe y fue subida)
+        # Eliminar de Google Drive o Cloudinary (si existe y fue subida)
         drive_info = photo_to_delete.drive_info
-        drive_config = photo_to_delete.drive_config_used 
+        drive_config = photo_to_delete.drive_config_used
 
-        if drive_info and drive_info.get('drive_id') and GOOGLE_DRIVE_AVAILABLE and drive_config:
-            try:
-                service = get_drive_service(drive_config.service_account_json, user_email=drive_config.user_email)
-                if service:
-                    service.files().delete(fileId=drive_info['drive_id']).execute()
-                    logger.info(f"Deleted photo from Google Drive: {drive_info['drive_id']} using config '{drive_config.id}'")
-                else:
-                    logger.warning(f"Could not get Google Drive service for deletion of photo ID: {photo_id} (Config: {drive_config.id}).")
-            except Exception as e:
-                logger.error(f"Error deleting photo from Google Drive ID {drive_info['drive_id']} (Photo ID: {photo_id}): {e}", exc_info=True)
+        if drive_config and drive_info:
+            if drive_config.provider == 'drive' and drive_info.get('drive_id') and GOOGLE_DRIVE_AVAILABLE:
+                try:
+                    service = get_drive_service(drive_config.service_account_json, user_email=drive_config.user_email)
+                    if service:
+                        service.files().delete(fileId=drive_info['drive_id']).execute()
+                        logger.info(f"Deleted photo from Google Drive: {drive_info['drive_id']} using config '{drive_config.id}'")
+                    else:
+                        logger.warning(f"Could not get Google Drive service for deletion of photo ID: {photo_id} (Config: {drive_config.id}).")
+                except Exception as e:
+                    logger.error(f"Error deleting photo from Google Drive ID {drive_info['drive_id']} (Photo ID: {photo_id}): {e}", exc_info=True)
+
+            elif drive_config.provider == 'cloudinary' and drive_info.get('cloudinary_id') and CLOUDINARY_AVAILABLE:
+                try:
+                    cloudinary.config(
+                        cloud_name=drive_config.cloudinary_cloud_name,
+                        api_key=drive_config.cloudinary_api_key,
+                        api_secret=drive_config.cloudinary_api_secret,
+                        secure=True
+                    )
+                    cloudinary.uploader.destroy(drive_info['cloudinary_id'])
+                    logger.info(f"Deleted photo from Cloudinary: {drive_info['cloudinary_id']} using config '{drive_config.id}'")
+                except Exception as e:
+                    logger.error(f"Error deleting photo from Cloudinary ID {drive_info['cloudinary_id']} (Photo ID: {photo_id}): {e}", exc_info=True)
         else:
-            logger.info(f"Skipped Google Drive deletion for photo ID {photo_id}. Drive info: {drive_info}, Config: {drive_config.id if drive_config else 'N/A'}, Available: {GOOGLE_DRIVE_AVAILABLE}")
+            logger.info(f"Skipped cloud deletion for photo ID {photo_id}. Config: {drive_config.id if drive_config else 'N/A'}")
         
         # Eliminar archivo localmente si existe y estamos en desarrollo local
         if IS_LOCAL_DEV and photo_to_delete.local_path and os.path.exists(photo_to_delete.local_path):
@@ -1742,21 +2009,35 @@ def delete_link(link_id):
     try:
         link_to_delete = Link.query.get(link_id)
         if link_to_delete:
-            # === PASO CRÍTICO: Eliminar fotos de Google Drive antes de eliminar el Link ===
-            # Esto es necesario porque el cascade de SQLAlchemy solo elimina de la DB, no de Drive.
+            # === PASO CRÍTICO: Eliminar fotos de Google Drive/Cloudinary antes de eliminar el Link ===
+            # Esto es necesario porque el cascade de SQLAlchemy solo elimina de la DB, no de la nube.
             # Se itera sobre link_to_delete.photos (la relación 'photos' en Link)
             for photo in link_to_delete.photos: # 'photos' es el nombre del backref desde Photo.link
                 drive_info = photo.drive_info
                 drive_config = photo.drive_config_used
-                
-                if drive_info and drive_info.get('drive_id') and GOOGLE_DRIVE_AVAILABLE and drive_config:
-                    try:
-                        service = get_drive_service(drive_config.service_account_json, user_email=drive_config.user_email)
-                        if service:
-                            service.files().delete(fileId=drive_info['drive_id']).execute()
-                            logger.info(f"Deleted photo from Google Drive: {drive_info['drive_id']} (linked to deleted Link {link_id})")
-                    except Exception as e:
-                        logger.error(f"Error deleting photo {photo.id} from Google Drive during link deletion: {e}", exc_info=True)
+
+                if drive_config and drive_info:
+                    if drive_config.provider == 'drive' and drive_info.get('drive_id') and GOOGLE_DRIVE_AVAILABLE:
+                        try:
+                            service = get_drive_service(drive_config.service_account_json, user_email=drive_config.user_email)
+                            if service:
+                                service.files().delete(fileId=drive_info['drive_id']).execute()
+                                logger.info(f"Deleted photo from Google Drive: {drive_info['drive_id']} (linked to deleted Link {link_id})")
+                        except Exception as e:
+                            logger.error(f"Error deleting photo {photo.id} from Google Drive during link deletion: {e}", exc_info=True)
+
+                    elif drive_config.provider == 'cloudinary' and drive_info.get('cloudinary_id') and CLOUDINARY_AVAILABLE:
+                        try:
+                            cloudinary.config(
+                                cloud_name=drive_config.cloudinary_cloud_name,
+                                api_key=drive_config.cloudinary_api_key,
+                                api_secret=drive_config.cloudinary_api_secret,
+                                secure=True
+                            )
+                            cloudinary.uploader.destroy(drive_info['cloudinary_id'])
+                            logger.info(f"Deleted photo from Cloudinary: {drive_info['cloudinary_id']} (linked to deleted Link {link_id})")
+                        except Exception as e:
+                            logger.error(f"Error deleting photo {photo.id} from Cloudinary during link deletion: {e}", exc_info=True)
 
             # Eliminar el Link de la base de datos.
             # El 'cascade="all, delete-orphan"' en la relación Link.photos
@@ -1787,16 +2068,36 @@ def init_db():
 
 @app.route('/migrate_db')
 def migrate_db():
-    """Ruta para migrar la base de datos (agregar columna user_email)."""
+    """Ruta para migrar la base de datos (agregar columnas para soporte multi-proveedor)."""
     try:
         with app.app_context():
-            # Agregar columna user_email a drive_config si no existe
+            # Agregar columna provider si no existe (default 'drive')
+            db.session.execute(db.text(
+                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS provider VARCHAR(20) DEFAULT 'drive'"
+            ))
+
+            # Agregar columna user_email para Google Drive si no existe
             db.session.execute(db.text(
                 "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS user_email VARCHAR(255)"
             ))
+
+            # Agregar columnas de Cloudinary si no existen
+            db.session.execute(db.text(
+                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_cloud_name VARCHAR(100)"
+            ))
+            db.session.execute(db.text(
+                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_api_key VARCHAR(100)"
+            ))
+            db.session.execute(db.text(
+                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_api_secret VARCHAR(100)"
+            ))
+            db.session.execute(db.text(
+                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS cloudinary_folder VARCHAR(255)"
+            ))
+
             db.session.commit()
-        logger.info("Migración completada: columna user_email agregada a drive_config.")
-        return "Migración completada exitosamente. Columna user_email agregada.", 200
+        logger.info("Migración completada: columnas para multi-proveedor agregadas a drive_config.")
+        return "Migración completada exitosamente. Columnas para Google Drive y Cloudinary agregadas.", 200
     except Exception as e:
         logger.error(f"Error en migración de base de datos: {e}", exc_info=True)
         return f"Error en migración: {e}", 500

@@ -7,3 +7,4 @@ gunicorn==20.1.0
 google-api-python-client==2.86.0
 google-auth==2.17.3
 psycopg2-binary==2.9.9
+cloudinary==1.36.0

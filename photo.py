@@ -2071,6 +2071,11 @@ def migrate_db():
     """Ruta para migrar la base de datos (agregar columnas para soporte multi-proveedor)."""
     try:
         with app.app_context():
+            # Hacer service_account_json nullable (importante para Cloudinary)
+            db.session.execute(db.text(
+                "ALTER TABLE drive_config ALTER COLUMN service_account_json DROP NOT NULL"
+            ))
+
             # Agregar columna provider si no existe (default 'drive')
             db.session.execute(db.text(
                 "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS provider VARCHAR(20) DEFAULT 'drive'"

@@ -1777,13 +1777,29 @@ def delete_link(link_id):
 def init_db():
     """Ruta para inicializar la base de datos (crear tablas). Útil para el primer despliegue."""
     try:
-        with app.app_context(): 
+        with app.app_context():
             db.create_all()
         logger.info("Base de datos inicializada (tablas creadas).")
         return "Base de datos inicializada (tablas creadas).", 200
     except Exception as e:
         logger.error(f"Error al inicializar la base de datos: {e}", exc_info=True)
         return f"Error al inicializar la base de datos: {e}", 500
+
+@app.route('/migrate_db')
+def migrate_db():
+    """Ruta para migrar la base de datos (agregar columna user_email)."""
+    try:
+        with app.app_context():
+            # Agregar columna user_email a drive_config si no existe
+            db.session.execute(db.text(
+                "ALTER TABLE drive_config ADD COLUMN IF NOT EXISTS user_email VARCHAR(255)"
+            ))
+            db.session.commit()
+        logger.info("Migración completada: columna user_email agregada a drive_config.")
+        return "Migración completada exitosamente. Columna user_email agregada.", 200
+    except Exception as e:
+        logger.error(f"Error en migración de base de datos: {e}", exc_info=True)
+        return f"Error en migración: {e}", 500
 
 
 if __name__ == '__main__':

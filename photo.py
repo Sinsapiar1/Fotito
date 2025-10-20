@@ -1368,6 +1368,11 @@ ADMIN_TEMPLATE = """
 
 # ==================== FLASK ROUTES ====================
 
+@app.route('/health')
+def health():
+    """Health check endpoint for Render"""
+    return {'status': 'ok', 'message': 'Application is running'}, 200
+
 @app.route('/')
 def index():
     """Página principal"""
